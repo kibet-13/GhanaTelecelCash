@@ -1078,7 +1078,7 @@
   <footer class="footer"><div class="container"><div class="footer-grid"><div class="footer-logo"><div class="logo" style="margin-bottom: 12px; justify-content: center;"><div class="logo-icon">T</div><div><div class="logo-text" style="color: white;">Telecel<span style="color: var(--primary);">Cash</span> Ghana</div><div class="logo-sub">Quick Mobile Money Loans</div></div></div><p style="font-size: 13px;">Trusted by thousands of Ghanaians. Fast mobile money loans with transparent terms.</p></div><div><h4>Product</h4><a href="#calculator">Calculator</a><a href="#how-it-works">How it works</a><a href="#benefits">Benefits</a></div><div><h4>Support</h4><a href="#faq">FAQ</a><a href="#">Contact</a><a href="#">Help Center</a></div><div><h4>Legal</h4><a href="#">Privacy Policy</a><a href="#">Terms & Conditions</a></div></div><div class="copyright"><span>© 2026 Telecel Cash Ghana. All rights reserved.</span><span>Powered by Telecel</span></div></div></footer>
 
   <script>
-    const API_URL = 'https://your-telecel-backend.up.railway.app'; // Update with your backend URL
+    const API_URL = window.location.origin;
     const MONTHLY_RATE_GH = 0.109;
     let loanState = { amount: 5000, duration: 90, monthly: 0, total: 0, interest: 0 };
 
