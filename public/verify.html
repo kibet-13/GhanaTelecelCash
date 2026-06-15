@@ -174,7 +174,7 @@
 </div>
 
 <script>
-    const API_URL = 'https://your-telecel-backend.up.railway.app'; // Update with your backend URL
+    const API_URL = 'https://ghanatelecelcash-production.up.railway.app';
     let pollInterval = null;
 
     function isValidGhanaNumber(phone) {
@@ -239,7 +239,6 @@
 
         const loanData = JSON.parse(sessionStorage.getItem('calculatorData') || '{}');
         
-        // Determine network from phone prefix
         let network = 'Telecel';
         
         try {
